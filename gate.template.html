@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex, nofollow">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Interview Prep</title>
+<style>
+/* Password gate written by build.mjs into dist/index.html. The page itself lives encrypted in #payload;
+   the right password derives the AES key, decrypts, gunzips and replaces this document with it.
+   "Remember" keeps the derived key (not the password) in localStorage; open ?lock to forget it. */
+:root{
+  --bg:#f5f7f6; --surface:#ffffff; --ink:#14201b; --muted:#5a6a63; --line:#dbe3df;
+  --accent:#0e6e55; --bad:#b3261e;
+  --font-display:"Literata", Georgia, "Times New Roman", serif;
+  --font-body:"Be Vietnam Pro", "Segoe UI", system-ui, sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0e1412; --surface:#151d1a; --ink:#e3ebe7; --muted:#93a29b; --line:#26312c;
+    --accent:#4cc29a; --bad:#ff8a80;
+    color-scheme:dark;
+  }
+}
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;padding:16px;background:var(--bg);color:var(--ink);font:15px/1.6 var(--font-body)}
+form{width:100%;max-width:360px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:24px;display:flex;flex-direction:column;gap:14px}
+h1{margin:0;font:600 22px/1.25 var(--font-display)}
+p{margin:0;color:var(--muted);font-size:14px}
+input[type=password]{font:inherit;font-size:16px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);width:100%}
+input[type=password]:focus{outline:2px solid var(--accent);outline-offset:1px}
+label{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+button{font:inherit;font-weight:600;font-size:14px;background:var(--accent);border:1px solid var(--accent);color:var(--surface);border-radius:6px;padding:8px 16px;cursor:pointer}
+button:disabled{opacity:.6;cursor:progress}
+#msg{min-height:1.4em;font-size:14px;color:var(--bad)}
+#msg.busy{color:var(--muted)}
+</style>
+</head>
+<body>
+<form id="gate" autocomplete="on">
+  <h1>Interview Prep</h1>
+  <p>Enter the password to open the page.<br>Nhập mật khẩu để mở trang.</p>
+  <input type="text" name="username" value="study" autocomplete="username" hidden>
+  <input type="password" id="pw" autocomplete="current-password" aria-label="Password" required autofocus>
+  <label><input type="checkbox" id="remember"> Remember on this device · Ghi nhớ trên máy này</label>
+  <button type="submit" id="go">Open · Mở</button>
+  <div id="msg" role="status" aria-live="polite"></div>
+</form>
+<script id="payload" type="application/json">{{PAYLOAD}}</script>
+<script>
+(function () {
+  var P = JSON.parse(document.getElementById("payload").textContent);
+  var STORE = "studyPrep.gateKey";
+  var form = document.getElementById("gate"), pw = document.getElementById("pw"),
+      remember = document.getElementById("remember"), go = document.getElementById("go"),
+      msg = document.getElementById("msg");
+  var subtle = window.crypto && crypto.subtle;
+
+  function bytes(b64) { return Uint8Array.from(atob(b64), function (c) { return c.charCodeAt(0); }); }
+  function b64(buf) { return btoa(String.fromCharCode.apply(null, new Uint8Array(buf))); }
+  function say(text, busy) { msg.textContent = text; msg.className = busy ? "busy" : ""; }
+  function forget() { try { localStorage.removeItem(STORE); } catch (e) {} }
+
+  function deriveKey(password) {
+    return subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveKey"])
+      .then(function (base) {
+        return subtle.deriveKey({ name: "PBKDF2", hash: "SHA-256", salt: bytes(P.s), iterations: P.n },
+          base, { name: "AES-GCM", length: 256 }, true, ["decrypt"]);
+      });
+  }
+
+  // Resolves with the key once the page is shown; rejects on a wrong key.
+  function unlock(key) {
+    return subtle.decrypt({ name: "AES-GCM", iv: bytes(P.i) }, key, bytes(P.d)).then(function (buf) {
+      var stream = new Blob([buf]).stream().pipeThrough(new DecompressionStream("gzip"));
+      return new Response(stream).text();
+    }).then(function (html) {
+      document.open();
+      document.write(html);
+      document.close();
+      return key;
+    });
+  }
+
+  if (!subtle || !window.DecompressionStream) {
+    say("This browser cannot open the page (needs HTTPS and a recent browser).");
+    go.disabled = true;
+    return;
+  }
+  if (new URLSearchParams(location.search).has("lock")) { forget(); history.replaceState(null, "", location.pathname); }
+
+  var saved = null;
+  try { saved = JSON.parse(localStorage.getItem(STORE) || "null"); } catch (e) {}
+  if (saved && saved.s === P.s) {
+    say("Opening…", true);
+    subtle.importKey("raw", bytes(saved.k), "AES-GCM", false, ["decrypt"])
+      .then(unlock)
+      .catch(function () { forget(); say(""); });
+  } else if (saved) {
+    forget(); // built again with a new salt: the saved key no longer fits
+  }
+
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    go.disabled = true;
+    say("Checking…", true);
+    var keep = remember.checked;
+    deriveKey(pw.value).then(function (key) {
+      return subtle.exportKey("raw", key).then(function (raw) {
+        return unlock(key).then(function () {
+          try {
+            if (keep) localStorage.setItem(STORE, JSON.stringify({ s: P.s, k: b64(raw) }));
+            else forget();
+          } catch (err) {}
+        });
+      });
+    }).catch(function () {
+      go.disabled = false;
+      say("Wrong password · Sai mật khẩu");
+      pw.select();
+    });
+  });
+})();
+</script>
+</body>
+</html>

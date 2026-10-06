@@ -1,0 +1,8 @@
+# Public deploy repo: only the encrypted build and the tools that make it are tracked.
+# The plaintext site (index.html, *.js data) lives in the private repo and must never be added here.
+/*
+!/.gitignore
+!/README.md
+!/build.mjs
+!/gate.template.html
+!/docs/
